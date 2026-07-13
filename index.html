@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Waymark — Run Route Finder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#16281F;
+    --fog:#EDE7DA;
+    --rust:#A6491F;
+    --sky:#7C93A3;
+    --blaze:#E8B84B;
+    --line: rgba(22,40,31,0.12);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; height:100%; background:var(--fog); color:var(--ink); font-family:'Inter',sans-serif; overscroll-behavior:none;}
+
+  .topbar{
+    padding:18px 20px 14px;
+    display:flex; align-items:baseline; gap:10px;
+    border-bottom:1px solid var(--line);
+    background:var(--fog);
+  }
+  .topbar .mark{
+    width:10px; height:22px; background:var(--blaze);
+    border-radius:2px; transform:rotate(-4deg);
+  }
+  .topbar h1{
+    font-family:'Bebas Neue', sans-serif;
+    font-size:28px; letter-spacing:0.5px; margin:0; font-weight:400;
+  }
+  .topbar span{ color:var(--sky); font-size:13px; font-family:'JetBrains Mono',monospace; }
+
+  .card{
+    margin:16px;
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:18px 18px 14px;
+  }
+  .field-label{
+    font-size:12px; text-transform:uppercase; letter-spacing:0.08em;
+    color:var(--sky); font-weight:600; margin-bottom:8px;
+  }
+  .dist-row{ display:flex; align-items:baseline; gap:10px; margin-bottom:4px;}
+  .dist-value{
+    font-family:'Bebas Neue',sans-serif; font-size:44px; line-height:1;
+    color:var(--rust);
+  }
+  .dist-unit{ font-family:'JetBrains Mono',monospace; font-size:14px; color:var(--sky);}
+  input[type=range]{
+    width:100%; margin:10px 0 18px; accent-color:var(--rust); height:4px;
+  }
+  .scenery-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px;
+  }
+  .scenery-btn{
+    border:1.5px solid var(--line); background:var(--fog);
+    border-radius:10px; padding:12px 10px; font-family:'Inter',sans-serif;
+    font-size:14px; font-weight:600; color:var(--ink);
+    display:flex; align-items:center; gap:8px; cursor:pointer;
+  }
+  .scenery-btn .dot{width:8px;height:8px;border-radius:50%; background:var(--sky);}
+  .scenery-btn.active{
+    border-color:var(--rust); background:rgba(166,73,31,0.08);
+  }
+  .scenery-btn.active .dot{ background:var(--rust); }
+
+  button.primary{
+    width:100%; padding:15px; border:none; border-radius:10px;
+    background:var(--ink); color:var(--fog);
+    font-family:'Inter',sans-serif; font-weight:700; font-size:15px;
+    letter-spacing:0.02em; cursor:pointer;
+  }
+  button.primary:disabled{ opacity:0.5; }
+  button.primary:active{ background:var(--rust); }
+
+  .status{
+    margin:0 16px 12px; font-family:'JetBrains Mono',monospace;
+    font-size:12.5px; color:var(--sky); min-height:16px;
+  }
+  .status.err{ color:var(--rust); }
+
+  .badge{
+    display:inline-flex; align-items:center; gap:6px;
+    margin:0 16px 12px; padding:6px 10px; border-radius:100px;
+    font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700;
+    letter-spacing:0.04em; text-transform:uppercase;
+    background:rgba(232,184,75,0.22); color:#8a6a1a; width:fit-content;
+  }
+  .badge.repeat{ background:rgba(124,147,163,0.18); color:var(--sky); }
+  .badge::before{ content:'●'; font-size:8px; }
+
+  .action-row{ display:flex; gap:8px; padding:0 16px 12px; }
+  .action-row button.primary{ flex:1; }
+  button.ghost{
+    padding:15px 18px; border:1.5px solid var(--ink); border-radius:10px;
+    background:transparent; color:var(--ink); font-family:'Inter',sans-serif;
+    font-weight:700; font-size:15px; cursor:pointer; display:none;
+  }
+  button.ghost.show{ display:block; }
+  button.ghost:active{ background:var(--ink); color:var(--fog); }
+
+  #map{ height:44vh; margin:0 16px; border-radius:14px; border:1px solid var(--line); background:#e5e1d4; }
+
+  .bib{
+    margin:16px; padding:16px 18px;
+    background:var(--ink); border-radius:14px;
+    display:none; grid-template-columns:1fr 1fr 1fr; gap:6px;
+    color:var(--fog);
+  }
+  .bib.show{ display:grid; }
+  .bib .stat{ text-align:center; }
+  .bib .stat .num{ font-family:'Bebas Neue',sans-serif; font-size:30px; color:var(--blaze); line-height:1;}
+  .bib .stat .lbl{ font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--sky); margin-top:4px;}
+
+  .footnote{ text-align:center; font-size:11px; color:var(--sky); padding:6px 20px 24px; font-family:'JetBrains Mono',monospace;}
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="mark"></div>
+    <h1>WAYMARK</h1>
+    <span>run route finder</span>
+  </div>
+
+  <div class="card">
+    <div class="field-label">Distance</div>
+    <div class="dist-row">
+      <div class="dist-value" id="distValue">5.0</div>
+      <div class="dist-unit">KM ROUND TRIP</div>
+    </div>
+    <input type="range" id="distSlider" min="1" max="15" step="0.5" value="5">
+
+    <div class="field-label">Scenery</div>
+    <div class="scenery-grid" id="sceneryGrid">
+      <div class="scenery-btn active" data-type="park"><span class="dot"></span>Park &amp; green space</div>
+      <div class="scenery-btn" data-type="water"><span class="dot"></span>Water &amp; waterfront</div>
+      <div class="scenery-btn" data-type="quiet"><span class="dot"></span>Quiet streets</div>
+      <div class="scenery-btn" data-type="urban"><span class="dot"></span>Urban &amp; busy</div>
+      <div class="scenery-btn" data-type="any" style="grid-column:1 / -1;"><span class="dot"></span>Surprise me</div>
+    </div>
+
+    <div class="action-row">
+      <button class="primary" id="findBtn">FIND MY ROUTE</button>
+      <button class="ghost" id="shuffleBtn">SHUFFLE</button>
+    </div>
+  </div>
+
+  <div class="status" id="status">Tap "find my route" to get started — I'll need your location.</div>
+  <div class="badge" id="badge" style="display:none;"></div>
+
+  <div id="map"></div>
+
+  <div class="bib" id="bib">
+    <div class="stat"><div class="num" id="statDist">–</div><div class="lbl">Distance</div></div>
+    <div class="stat"><div class="num" id="statTime">–</div><div class="lbl">Est. time</div></div>
+    <div class="stat"><div class="num" id="statPace">–</div><div class="lbl">Pace /km</div></div>
+  </div>
+
+  <div class="footnote">Route data © OpenStreetMap contributors · OSRM</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  let selectedScenery = 'park';
+  let map, startMarker, routeLine, poiMarker;
+  let historyMarkers = [];
+  let lastCandidates = [];
+  let lastOrigin = null;
+  const PACE_MIN_PER_KM = 6;
+  const HISTORY_KEY = 'waymark_history_v1';
+  const HISTORY_WINDOW_DAYS = 14;
+  const EXCLUDE_RADIUS_M = 300;
+
+  function loadHistory(){
+    try{ return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+    catch(e){ return []; }
+  }
+  function saveToHistory(point, scenery){
+    const history = loadHistory();
+    history.push({ lat: point[0], lng: point[1], scenery, ts: Date.now() });
+    const trimmed = history.slice(-60);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+  }
+  function recentHistory(){
+    const cutoff = Date.now() - HISTORY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    return loadHistory().filter(h => h.ts >= cutoff);
+  }
+  function isNovel(point, history){
+    return !history.some(h => distMeters(point, [h.lat, h.lng]) < EXCLUDE_RADIUS_M);
+  }
+
+  const distSlider = document.getElementById('distSlider');
+  const distValue = document.getElementById('distValue');
+  distSlider.addEventListener('input', () => {
+    distValue.textContent = parseFloat(distSlider.value).toFixed(1);
+  });
+
+  document.getElementById('sceneryGrid').addEventListener('click', (e) => {
+    const btn = e.target.closest('.scenery-btn');
+    if(!btn) return;
+    document.querySelectorAll('.scenery-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedScenery = btn.dataset.type;
+  });
+
+  function initMap(lat, lng){
+    map = L.map('map', { zoomControl: true }).setView([lat, lng], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19
+    }).addTo(map);
+    startMarker = L.circleMarker([lat, lng], {
+      radius: 8, color:'#A6491F', fillColor:'#A6491F', fillOpacity:1, weight:2
+    }).addTo(map).bindPopup('Start / finish');
+    drawHistoryMarkers();
+  }
+
+  function drawHistoryMarkers(){
+    historyMarkers.forEach(m => map.removeLayer(m));
+    historyMarkers = recentHistory().map(h =>
+      L.circleMarker([h.lat, h.lng], {
+        radius:5, color:'#7C93A3', fillColor:'#7C93A3', fillOpacity:0.5, weight:1, opacity:0.5
+      }).addTo(map).bindPopup('Recent turnaround')
+    );
+  }
+
+  function setStatus(msg, isError=false){
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.classList.toggle('err', isError);
+  }
+
+  const OVERPASS_TAGS = {
+    park:  '["leisure"="park"]',
+    water: '["natural"="water"]',
+    quiet: '["highway"="residential"]',
+    urban: '["landuse"="commercial"]'
+  };
+  const SCENERY_TYPES = Object.keys(OVERPASS_TAGS);
+
+  function distMeters(a, b){
+    const R = 6371000;
+    const toRad = d => d * Math.PI/180;
+    const dLat = toRad(b[0]-a[0]);
+    const dLng = toRad(b[1]-a[1]);
+    const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.sin(dLng/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  async function queryOverpass(lat, lng, radius, sceneryType){
+    const tag = OVERPASS_TAGS[sceneryType];
+    const query = `
+      [out:json][timeout:15];
+      (
+        node${tag}(around:${radius},${lat},${lng});
+        way${tag}(around:${radius},${lat},${lng});
+      );
+      out center 40;
+    `;
+    const resp = await fetch('https://overpass-api.de/api/interpreter', {
+      method:'POST', body: query
+    });
+    if(!resp.ok) throw new Error('Overpass request failed');
+    const data = await resp.json();
+    if(!data.elements) return [];
+    return data.elements.map(el => el.type === 'node' ? [el.lat, el.lon] : [el.center.lat, el.center.lon]);
+  }
+
+  async function findScenicCandidates(lat, lng, targetMeters){
+    const radius = Math.min(Math.max(targetMeters * 1.6, 800), 8000);
+    const typesToSearch = selectedScenery === 'any'
+      ? [SCENERY_TYPES[Math.floor(Math.random() * SCENERY_TYPES.length)]]
+      : [selectedScenery];
+
+    const rawPoints = await queryOverpass(lat, lng, radius, typesToSearch[0]);
+    if(rawPoints.length === 0) return [];
+
+    const history = recentHistory();
+    const scored = rawPoints.map(p => ({
+      point: p,
+      diff: Math.abs(distMeters([lat,lng], p) - targetMeters),
+      novel: isNovel(p, history)
+    }));
+
+    scored.sort((a,b) => (a.novel === b.novel ? a.diff - b.diff : (a.novel ? -1 : 1)));
+    return scored.map(s => s.point);
+  }
+
+  async function fetchRoute(start, via){
+    const coords = `${start[1]},${start[0]};${via[1]},${via[0]};${start[1]},${start[0]}`;
+    const url = `https://router.project-osrm.org/route/v1/foot/${coords}?overview=full&geometries=geojson`;
+    const resp = await fetch(url);
+    if(!resp.ok) throw new Error('Routing request failed');
+    const data = await resp.json();
+    if(!data.routes || data.routes.length === 0) throw new Error('No route found');
+    return data.routes[0];
+  }
+
+  function drawRoute(route, startLatLng, poiLatLng){
+    if(routeLine) map.removeLayer(routeLine);
+    if(poiMarker) map.removeLayer(poiMarker);
+
+    const latlngs = route.geometry.coordinates.map(c => [c[1], c[0]]);
+    routeLine = L.polyline(latlngs, { color:'#A6491F', weight:4, opacity:0.9 }).addTo(map);
+    poiMarker = L.circleMarker(poiLatLng, {
+      radius:7, color:'#E8B84B', fillColor:'#E8B84B', fillOpacity:1, weight:2
+    }).addTo(map).bindPopup('Turnaround point');
+
+    map.fitBounds(routeLine.getBounds(), { padding:[24,24] });
+  }
+
+  function showBadge(isNovel){
+    const el = document.getElementById('badge');
+    el.style.display = 'inline-flex';
+    if(isNovel){
+      el.className = 'badge';
+      el.textContent = "New spot — you haven't run here in 14 days";
+    } else {
+      el.className = 'badge repeat';
+      el.textContent = 'Familiar spot — nothing new nearby to offer right now';
+    }
+  }
+
+  function showStats(distanceMeters){
+    const km = distanceMeters / 1000;
+    const minutes = km * PACE_MIN_PER_KM;
+    const h = Math.floor(minutes/60), m = Math.round(minutes%60);
+    document.getElementById('statDist').textContent = km.toFixed(1);
+    document.getElementById('statTime').textContent = h > 0 ? `${h}:${m.toString().padStart(2,'0')}` : `${m}m`;
+    document.getElementById('statPace').textContent = `${PACE_MIN_PER_KM}:00`;
+    document.getElementById('bib').classList.add('show');
+  }
+
+  async function buildRouteFromPoint(poi, isNovelPoint){
+    setStatus('Building your route…');
+    const route = await fetchRoute(lastOrigin, poi);
+    drawRoute(route, lastOrigin, poi);
+    showStats(route.distance);
+    showBadge(isNovelPoint);
+    saveToHistory(poi, selectedScenery);
+    drawHistoryMarkers();
+    setStatus(`Route found — ${(route.distance/1000).toFixed(1)} km out-and-back.`);
+  }
+
+  function pickCandidate(offset){
+    if(lastCandidates.length === 0) return null;
+    const pool = lastCandidates.slice(0, Math.min(5, lastCandidates.length));
+    const idx = (offset + Math.floor(Math.random() * pool.length)) % lastCandidates.length;
+    return lastCandidates[idx];
+  }
+
+  document.getElementById('findBtn').addEventListener('click', async () => {
+    const targetKm = parseFloat(distSlider.value);
+    const findBtn = document.getElementById('findBtn');
+    const shuffleBtn = document.getElementById('shuffleBtn');
+    findBtn.disabled = true;
+    shuffleBtn.classList.remove('show');
+
+    setStatus('Finding your location…');
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude, lng = pos.coords.longitude;
+      lastOrigin = [lat, lng];
+      if(!map) initMap(lat, lng); else map.setView([lat,lng], 14);
+      startMarker.setLatLng([lat,lng]);
+      drawHistoryMarkers();
+
+      try{
+        setStatus('Searching for scenery nearby…');
+        const targetOneWayMeters = (targetKm * 1000 / 2);
+        lastCandidates = await findScenicCandidates(lat, lng, targetOneWayMeters);
+        if(lastCandidates.length === 0){
+          setStatus('No matching scenery found nearby — try a different type or a longer distance.', true);
+          findBtn.disabled = false;
+          return;
+        }
+
+        const history = recentHistory();
+        const poi = pickCandidate(0);
+        await buildRouteFromPoint(poi, isNovel(poi, history));
+        if(lastCandidates.length > 1) shuffleBtn.classList.add('show');
+      } catch(err){
+        console.error(err);
+        setStatus('Something went wrong finding a route. Try again in a moment.', true);
+      } finally {
+        findBtn.disabled = false;
+      }
+    }, (err) => {
+      setStatus('Location access denied — I need this to suggest a route from where you are.', true);
+      findBtn.disabled = false;
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  });
+
+  document.getElementById('shuffleBtn').addEventListener('click', async () => {
+    if(lastCandidates.length === 0 || !lastOrigin) return;
+    const shuffleBtn = document.getElementById('shuffleBtn');
+    shuffleBtn.disabled = true;
+    try{
+      const history = recentHistory();
+      const poi = pickCandidate(1);
+      await buildRouteFromPoint(poi, isNovel(poi, history));
+    } catch(err){
+      console.error(err);
+      setStatus('Could not shuffle to a new route — try again.', true);
+    } finally {
+      shuffleBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
