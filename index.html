@@ -1,4 +1,41 @@
-ont-size:13px; font-family:'JetBrains Mono',monospace; }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Waymark — Run Route Finder</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#16281F;
+    --fog:#EDE7DA;
+    --rust:#A6491F;
+    --sky:#7C93A3;
+    --blaze:#E8B84B;
+    --line: rgba(22,40,31,0.12);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; height:100%; background:var(--fog); color:var(--ink); font-family:'Inter',sans-serif; overscroll-behavior:none;}
+
+  .topbar{
+    padding:18px 20px 14px;
+    display:flex; align-items:baseline; gap:10px;
+    border-bottom:1px solid var(--line);
+    background:var(--fog);
+  }
+  .topbar .mark{
+    width:10px; height:22px; background:var(--blaze);
+    border-radius:2px; transform:rotate(-4deg);
+  }
+  .topbar h1{
+    font-family:'Bebas Neue', sans-serif;
+    font-size:28px; letter-spacing:0.5px; margin:0; font-weight:400;
+  }
+  .topbar span{ color:var(--sky); font-size:13px; font-family:'JetBrains Mono',monospace; }
 
   .card{
     margin:16px;
@@ -83,6 +120,24 @@ ont-size:13px; font-family:'JetBrains Mono',monospace; }
   .bib .stat .num{ font-family:'Bebas Neue',sans-serif; font-size:30px; color:var(--blaze); line-height:1;}
   .bib .stat .lbl{ font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--sky); margin-top:4px;}
 
+  .complete-row{ margin:16px; }
+  button.complete{
+    width:100%; padding:15px; border:1.5px solid var(--rust); border-radius:10px;
+    background:#fff; color:var(--rust);
+    font-family:'Inter',sans-serif; font-weight:700; font-size:15px;
+    cursor:pointer; display:none;
+  }
+  button.complete.show{ display:block; }
+  button.complete:active{ background:var(--rust); color:#fff; }
+  button.complete.done{
+    background:var(--ink); border-color:var(--ink); color:var(--blaze); cursor:default;
+  }
+
+  .stats-line{
+    text-align:center; font-size:12px; color:var(--sky); padding:0 20px 4px;
+    font-family:'JetBrains Mono',monospace;
+  }
+
   .footnote{ text-align:center; font-size:11px; color:var(--sky); padding:6px 20px 24px; font-family:'JetBrains Mono',monospace;}
 </style>
 </head>
@@ -100,7 +155,7 @@ ont-size:13px; font-family:'JetBrains Mono',monospace; }
       <div class="dist-value" id="distValue">5.0</div>
       <div class="dist-unit">KM LOOP</div>
     </div>
-    <input type="range" id="distSlider" min="1" max="30" step="0.5" value="5">
+    <input type="range" id="distSlider" min="1" max="42" step="0.5" value="5">
 
     <div class="field-label">Scenery</div>
     <div class="scenery-grid" id="sceneryGrid">
@@ -128,6 +183,11 @@ ont-size:13px; font-family:'JetBrains Mono',monospace; }
     <div class="stat"><div class="num" id="statPace">–</div><div class="lbl">Pace /km</div></div>
   </div>
 
+  <div class="complete-row">
+    <button class="complete" id="completeBtn">✓ I RAN THIS — MARK COMPLETED</button>
+  </div>
+  <div class="stats-line" id="completedCount"></div>
+
   <div class="footnote">Route data © OpenStreetMap contributors · OSRM</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -137,6 +197,7 @@ ont-size:13px; font-family:'JetBrains Mono',monospace; }
   let historyMarkers = [];
   let lastCandidates = [];
   let lastOrigin = null;
+  let currentRoutePoints = null;
   const PACE_MIN_PER_KM = 6;
   const HISTORY_KEY = 'waymark_history_v1';
   const HISTORY_WINDOW_DAYS = 14;
@@ -199,6 +260,14 @@ ont-size:13px; font-family:'JetBrains Mono',monospace; }
     const el = document.getElementById('status');
     el.textContent = msg;
     el.classList.toggle('err', isError);
+  }
+
+  function updateCompletedCount(){
+    const n = recentHistory().length;
+    const el = document.getElementById('completedCount');
+    el.textContent = n === 0
+      ? 'No completed runs logged yet in the last 14 days'
+      : `${n} completed route${n === 1 ? '' : 's'} logged in the last 14 days`;
   }
 
   const OVERPASS_TAGS = {
@@ -342,9 +411,12 @@ ont-size:13px; font-family:'JetBrains Mono',monospace; }
     drawRoute(route, lastOrigin, [poi, secondPoint]);
     showStats(route.distance);
     showBadge(isNovelPoint);
-    saveToHistory(poi, selectedScenery);
-    saveToHistory(secondPoint, selectedScenery);
-    drawHistoryMarkers();
+    currentRoutePoints = [poi, secondPoint];
+    const completeBtn = document.getElementById('completeBtn');
+    completeBtn.classList.remove('done');
+    completeBtn.classList.add('show');
+    completeBtn.disabled = false;
+    completeBtn.textContent = '✓ I RAN THIS — MARK COMPLETED';
     setStatus(`Loop route found — ${(route.distance/1000).toFixed(1)} km, different streets there and back.`);
   }
 
@@ -416,6 +488,19 @@ ont-size:13px; font-family:'JetBrains Mono',monospace; }
       shuffleBtn.disabled = false;
     }
   });
+
+  document.getElementById('completeBtn').addEventListener('click', () => {
+    if(!currentRoutePoints) return;
+    currentRoutePoints.forEach(p => saveToHistory(p, selectedScenery));
+    drawHistoryMarkers();
+    updateCompletedCount();
+    const completeBtn = document.getElementById('completeBtn');
+    completeBtn.classList.add('done');
+    completeBtn.disabled = true;
+    completeBtn.textContent = '✓ COMPLETED — LOGGED TO YOUR HISTORY';
+  });
+
+  updateCompletedCount();
 </script>
 </body>
 </html>
