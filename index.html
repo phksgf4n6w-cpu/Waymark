@@ -135,9 +135,9 @@
     <div class="field-label">Distance</div>
     <div class="dist-row">
       <div class="dist-value" id="distValue">5.0</div>
-      <div class="dist-unit">KM ROUND TRIP</div>
+      <div class="dist-unit">KM LOOP</div>
     </div>
-    <input type="range" id="distSlider" min="1" max="15" step="0.5" value="5">
+    <input type="range" id="distSlider" min="1" max="30" step="0.5" value="5">
 
     <div class="field-label">Scenery</div>
     <div class="scenery-grid" id="sceneryGrid">
@@ -170,7 +170,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
   let selectedScenery = 'park';
-  let map, startMarker, routeLine, poiMarker;
+  let map, startMarker, routeLine, poiMarkers = [];
   let historyMarkers = [];
   let lastCandidates = [];
   let lastOrigin = null;
@@ -258,7 +258,7 @@
   async function queryOverpass(lat, lng, radius, sceneryType){
     const tag = OVERPASS_TAGS[sceneryType];
     const query = `
-      [out:json][timeout:15];
+      [out:json][timeout:25];
       (
         node${tag}(around:${radius},${lat},${lng});
         way${tag}(around:${radius},${lat},${lng});
@@ -275,7 +275,7 @@
   }
 
   async function findScenicCandidates(lat, lng, targetMeters){
-    const radius = Math.min(Math.max(targetMeters * 1.6, 800), 8000);
+    const radius = Math.min(Math.max(targetMeters * 1.3, 800), 20000);
     const typesToSearch = selectedScenery === 'any'
       ? [SCENERY_TYPES[Math.floor(Math.random() * SCENERY_TYPES.length)]]
       : [selectedScenery];
@@ -294,8 +294,9 @@
     return scored.map(s => s.point);
   }
 
-  async function fetchRoute(start, via){
-    const coords = `${start[1]},${start[0]};${via[1]},${via[0]};${start[1]},${start[0]}`;
+  async function fetchRoute(start, viaPoints){
+    const points = [start, ...viaPoints, start];
+    const coords = points.map(p => `${p[1]},${p[0]}`).join(';');
     const url = `https://router.project-osrm.org/route/v1/foot/${coords}?overview=full&geometries=geojson`;
     const resp = await fetch(url);
     if(!resp.ok) throw new Error('Routing request failed');
@@ -304,15 +305,47 @@
     return data.routes[0];
   }
 
-  function drawRoute(route, startLatLng, poiLatLng){
+  function bearingBetween(a, b){
+    const toRad = d => d * Math.PI/180, toDeg = r => r * 180/Math.PI;
+    const y = Math.sin(toRad(b[1]-a[1])) * Math.cos(toRad(b[0]));
+    const x = Math.cos(toRad(a[0]))*Math.sin(toRad(b[0])) -
+              Math.sin(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.cos(toRad(b[1]-a[1]));
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  function destinationPoint(start, bearingDeg, distanceMeters){
+    const R = 6371000;
+    const toRad = d => d * Math.PI/180, toDeg = r => r * 180/Math.PI;
+    const lat1 = toRad(start[0]), lng1 = toRad(start[1]), brng = toRad(bearingDeg);
+    const d = distanceMeters / R;
+    const lat2 = Math.asin(Math.sin(lat1)*Math.cos(d) + Math.cos(lat1)*Math.sin(d)*Math.cos(brng));
+    const lng2 = lng1 + Math.atan2(
+      Math.sin(brng)*Math.sin(d)*Math.cos(lat1),
+      Math.cos(d) - Math.sin(lat1)*Math.sin(lat2)
+    );
+    return [toDeg(lat2), toDeg(lng2)];
+  }
+
+  function buildLoopSecondPoint(origin, scenicPoint){
+    const distToScenic = distMeters(origin, scenicPoint);
+    const bearingToScenic = bearingBetween(origin, scenicPoint);
+    const turnAngle = 100 + Math.random() * 60;
+    const side = Math.random() < 0.5 ? 1 : -1;
+    const returnBearing = (bearingToScenic + side * turnAngle + 360) % 360;
+    return destinationPoint(origin, returnBearing, distToScenic);
+  }
+
+  function drawRoute(route, startLatLng, viaPoints){
     if(routeLine) map.removeLayer(routeLine);
-    if(poiMarker) map.removeLayer(poiMarker);
+    poiMarkers.forEach(m => map.removeLayer(m));
 
     const latlngs = route.geometry.coordinates.map(c => [c[1], c[0]]);
     routeLine = L.polyline(latlngs, { color:'#A6491F', weight:4, opacity:0.9 }).addTo(map);
-    poiMarker = L.circleMarker(poiLatLng, {
-      radius:7, color:'#E8B84B', fillColor:'#E8B84B', fillOpacity:1, weight:2
-    }).addTo(map).bindPopup('Turnaround point');
+    poiMarkers = viaPoints.map((p, i) =>
+      L.circleMarker(p, {
+        radius:7, color:'#E8B84B', fillColor:'#E8B84B', fillOpacity:1, weight:2
+      }).addTo(map).bindPopup(i === 0 ? 'Scenic waypoint' : 'Loop point')
+    );
 
     map.fitBounds(routeLine.getBounds(), { padding:[24,24] });
   }
@@ -340,14 +373,16 @@
   }
 
   async function buildRouteFromPoint(poi, isNovelPoint){
-    setStatus('Building your route…');
-    const route = await fetchRoute(lastOrigin, poi);
-    drawRoute(route, lastOrigin, poi);
+    setStatus('Building your loop route…');
+    const secondPoint = buildLoopSecondPoint(lastOrigin, poi);
+    const route = await fetchRoute(lastOrigin, [poi, secondPoint]);
+    drawRoute(route, lastOrigin, [poi, secondPoint]);
     showStats(route.distance);
     showBadge(isNovelPoint);
     saveToHistory(poi, selectedScenery);
+    saveToHistory(secondPoint, selectedScenery);
     drawHistoryMarkers();
-    setStatus(`Route found — ${(route.distance/1000).toFixed(1)} km out-and-back.`);
+    setStatus(`Loop route found — ${(route.distance/1000).toFixed(1)} km, different streets there and back.`);
   }
 
   function pickCandidate(offset){
@@ -374,8 +409,8 @@
 
       try{
         setStatus('Searching for scenery nearby…');
-        const targetOneWayMeters = (targetKm * 1000 / 2);
-        lastCandidates = await findScenicCandidates(lat, lng, targetOneWayMeters);
+        const targetSpokeMeters = (targetKm * 1000) / 3.7;
+        lastCandidates = await findScenicCandidates(lat, lng, targetSpokeMeters);
         if(lastCandidates.length === 0){
           setStatus('No matching scenery found nearby — try a different type or a longer distance.', true);
           findBtn.disabled = false;
@@ -393,9 +428,14 @@
         findBtn.disabled = false;
       }
     }, (err) => {
-      setStatus('Location access denied — I need this to suggest a route from where you are.', true);
+      let msg;
+      if(err.code === 1) msg = 'Location permission denied. Check Settings → Privacy & Security → Location Services → Safari.';
+      else if(err.code === 2) msg = 'Location unavailable right now — try again outdoors or near a window.';
+      else if(err.code === 3) msg = 'Location timed out — try again, it can take a moment outdoors.';
+      else msg = 'Could not get your location. Error: ' + err.message;
+      setStatus(msg, true);
       findBtn.disabled = false;
-    }, { enableHighAccuracy: true, timeout: 10000 });
+    }, { enableHighAccuracy: true, timeout: 15000 });
   });
 
   document.getElementById('shuffleBtn').addEventListener('click', async () => {
